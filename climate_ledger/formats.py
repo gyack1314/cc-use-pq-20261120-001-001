@@ -14,12 +14,15 @@ CSV_FIELDS = {
     "reading": ("station", "metric", "day", "revision", "value", "unit", "quality"),
     "population": ("id", "revision", "zone", "group", "start", "end", "count", "vulnerability"),
     "action": ("id", "revision", "name", "zone", "metric", "start", "end", "status", "capacity", "groups", "priority", "facility"),
+    "population_share": ("id", "revision", "source_zone", "target_zone", "group", "start", "end", "share"),
+    "station_coverage": ("id", "revision", "station", "target_zone", "start", "end", "weight", "metrics"),
+    "facility_allocation": ("id", "revision", "facility", "target_zone", "start", "end", "capacity", "groups"),
 }
 INTEGER_FIELDS = {"revision", "count", "capacity", "priority"}
 ARRAY_FIELDS = {"metrics", "groups"}
 
 
-def decode_csv(content, kind):
+def decode_csv(content, kind, *, allow_empty=False):
     require(kind in CSV_FIELDS, "kind", "CSV资料类型无效")
     require(isinstance(content, str), "encoding", "CSV需要UTF-8文本")
     stream = io.StringIO(content.lstrip("\ufeff"), newline="")
@@ -56,7 +59,7 @@ def decode_csv(content, kind):
             require(key not in identities, "duplicate", "同一CSV对象重复", identity=key, line=line)
             identities.add(key)
             records.append({"kind": kind, "data": value})
-        require(bool(records), "csv", "CSV没有资料行")
+        require(bool(records) or allow_empty, "csv", "CSV没有资料行")
         return records
     except csv.Error as exc:
         raise DomainError("csv", "CSV转义或引号无效", line=reader.line_num) from exc
@@ -91,7 +94,9 @@ def bundle_from_csv(batch_id, source, files):
             content = Path(path).read_text(encoding="utf-8-sig")
         except (OSError, UnicodeError) as exc:
             raise DomainError("input", "CSV文件不可读", path=str(path)) from exc
-        records.extend(decode_csv(content, kind))
+        rows = decode_csv(content, kind, allow_empty=True)
+        records.extend(rows)
+    require(bool(records), "csv", "CSV资料包没有资料行")
     return {"id": batch_id, "source": source, "records": records}
 
 

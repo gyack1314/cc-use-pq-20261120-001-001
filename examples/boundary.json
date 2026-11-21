@@ -1,0 +1,62 @@
+{
+  "id": "synthetic-boundary",
+  "source": "本地合成城市资料",
+  "records": [
+    {"kind": "zone", "data": {"id": "east", "revision": 1, "name": "河畔东片区"}},
+    {"kind": "zone", "data": {"id": "west", "revision": 1, "name": "河畔西片区"}},
+
+    {"kind": "station", "data": {"id": "river-s", "revision": 2, "zone": "river",
+      "start": "2026-01-01", "end": "2026-07-31", "weight": "1", "metrics": ["heat", "water"]}},
+    {"kind": "station", "data": {"id": "river-w", "revision": 1, "zone": "river",
+      "start": "2026-08-01", "end": "2026-08-04", "weight": "1", "metrics": ["heat", "water"]}},
+
+    {"kind": "reading", "data": {"station": "river-w", "metric": "heat", "day": "2026-08-01",
+      "revision": 1, "value": "32", "unit": "C", "quality": "valid"}},
+    {"kind": "reading", "data": {"station": "river-w", "metric": "heat", "day": "2026-08-02",
+      "revision": 1, "value": "32", "unit": "C", "quality": "valid"}},
+    {"kind": "reading", "data": {"station": "river-w", "metric": "heat", "day": "2026-08-03",
+      "revision": 1, "value": "36", "unit": "C", "quality": "valid"}},
+    {"kind": "reading", "data": {"station": "river-w", "metric": "heat", "day": "2026-08-04",
+      "revision": 1, "value": null, "unit": "C", "quality": "missing"}},
+
+    {"kind": "reading", "data": {"station": "hill-s", "metric": "heat", "day": "2026-08-01",
+      "revision": 1, "value": "31", "unit": "C", "quality": "valid"}},
+    {"kind": "reading", "data": {"station": "hill-s", "metric": "heat", "day": "2026-08-02",
+      "revision": 1, "value": "32", "unit": "C", "quality": "valid"}},
+    {"kind": "reading", "data": {"station": "hill-s", "metric": "heat", "day": "2026-08-03",
+      "revision": 1, "value": "34", "unit": "C", "quality": "valid"}},
+    {"kind": "reading", "data": {"station": "hill-s", "metric": "heat", "day": "2026-08-04",
+      "revision": 1, "value": "34", "unit": "C", "quality": "valid"}},
+
+    {"kind": "action", "data": {"id": "cool-river-b", "revision": 1, "name": "拆区后避暑空间（8月后期启用）",
+      "zone": "river", "metric": "heat", "start": "2026-08-03", "end": "2026-08-04", "status": "active",
+      "capacity": 30, "groups": ["senior", "adult"], "priority": 10, "facility": "river-library"}},
+    {"kind": "action", "data": {"id": "river-library-standby", "revision": 1, "name": "图书馆前期维护（非热指标）",
+      "zone": "river", "metric": "water", "start": "2026-08-01", "end": "2026-08-02", "status": "active",
+      "capacity": 5, "groups": ["adult"], "priority": 1, "facility": "river-library"}},
+
+    {"kind": "population_share", "data": {"id": "share-adult-east", "revision": 1,
+      "source_zone": "river", "target_zone": "east", "group": "adult",
+      "start": "2026-08-01", "end": "2026-08-04", "share": "0.75"}},
+    {"kind": "population_share", "data": {"id": "share-adult-west", "revision": 1,
+      "source_zone": "river", "target_zone": "west", "group": "adult",
+      "start": "2026-08-01", "end": "2026-08-04", "share": "0.25"}},
+    {"kind": "population_share", "data": {"id": "share-senior-east", "revision": 1,
+      "source_zone": "river", "target_zone": "east", "group": "senior",
+      "start": "2026-08-01", "end": "2026-08-04", "share": "0.25"}},
+    {"kind": "population_share", "data": {"id": "share-senior-west", "revision": 1,
+      "source_zone": "river", "target_zone": "west", "group": "senior",
+      "start": "2026-08-01", "end": "2026-08-04", "share": "0.75"}},
+
+    {"kind": "station_coverage", "data": {"id": "cover-west", "revision": 1,
+      "station": "river-w", "target_zone": "west",
+      "start": "2026-08-01", "end": "2026-08-04", "weight": "1", "metrics": ["heat", "water"]}},
+
+    {"kind": "facility_allocation", "data": {"id": "alloc-east", "revision": 1,
+      "facility": "river-library", "target_zone": "east",
+      "start": "2026-08-03", "end": "2026-08-04", "capacity": 10, "groups": ["senior", "adult"]}},
+    {"kind": "facility_allocation", "data": {"id": "alloc-west", "revision": 1,
+      "facility": "river-library", "target_zone": "west",
+      "start": "2026-08-03", "end": "2026-08-04", "capacity": 20, "groups": ["senior", "adult"]}}
+  ]
+}

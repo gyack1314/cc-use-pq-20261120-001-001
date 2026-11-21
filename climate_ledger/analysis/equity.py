@@ -1,22 +1,26 @@
 from decimal import Decimal
 
-from ..adaptation import Adaptation
 from ..contracts import days, decimal_text, query_spec, ratio, require
-from ..observatory.readings import Readings
-from ..residents import Residents
+from .exposure import Exposure
 
 
 class Equity:
-    def __init__(self, snapshot):
+    def __init__(self, snapshot, *, boundary="native"):
         self.snapshot = snapshot
-        self.readings = Readings(snapshot)
-        self.residents = Residents(snapshot)
-        self.adaptation = Adaptation(snapshot)
+        self.boundary = boundary
+        self.exposure = Exposure(snapshot, boundary=boundary)
+        self.maps = self.exposure.maps
 
     def analyze(self, value):
         spec = query_spec(value)
-        definition = self.readings.catalog.metric(spec["metric"])
+        if spec["boundary"] != self.boundary:
+            return Equity(self.snapshot, boundary=spec["boundary"]).analyze(value)
+        definition = self.exposure.native_readings.catalog.metric(spec["metric"])
         require(set(spec["zones"]).issubset(self.snapshot["zone"]), "zone", "公平性分析行政区不存在")
+        if self.maps is not None:
+            for zone in spec["zones"]:
+                require(zone not in self.maps.source_zones(), "boundary",
+                        "投影口径不能直接查询原区，请查询其目标区或改用native口径", zone=zone)
         threshold = Decimal(definition["threshold"])
         maximum_severity = (Decimal(definition["maximum"]) - threshold if definition["direction"] == "high"
                             else threshold - Decimal(definition["minimum"]))
@@ -24,13 +28,14 @@ class Equity:
         population_unknown = []
         gaps = []
         for zone in spec["zones"]:
+            readings, residents, adaptation = self.exposure.components_for(zone)
             for when in days(spec["start"], spec["end"]):
-                population = self.residents.day(zone, when)
+                population = residents.day(zone, when)
                 if not population["complete"]:
                     population_unknown.append({"zone": zone, "day": when, "groups": population["missing_groups"]})
                     continue
-                weather = self.readings.zone_day(zone, spec["metric"], when, spec["minimum_coverage"])
-                protection = self.adaptation.allocate(zone, spec["metric"], when, hazardous=True)
+                weather = readings.zone_day(zone, spec["metric"], when, spec["minimum_coverage"])
+                protection = adaptation.allocate(zone, spec["metric"], when, hazardous=True)
                 unknown_upper = Decimal(0)
                 for group in population["groups"]:
                     key = (zone, group["group"])

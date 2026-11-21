@@ -28,6 +28,8 @@ class Portfolio:
 
     def plan(self, value):
         spec = portfolio_spec(value)
+        require(spec["query"]["boundary"] == "native", "boundary",
+                "假设组合只在原区划下模拟，投影口径不能虚构目标区行动；请改用native口径")
         baseline = Exposure(self.snapshot).analyze(spec["query"])
         require(baseline["status"] == "qualified", "incomplete", "资料不完整，不能对行动组合排序")
         candidates = []

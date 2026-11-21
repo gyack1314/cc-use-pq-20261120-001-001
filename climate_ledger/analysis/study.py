@@ -1,6 +1,5 @@
 from decimal import Decimal
 
-from ..adaptation import Adaptation
 from ..contracts import (days, decimal_text, distinct_strings, number, period,
                          query_spec, require, shape)
 from .exposure import Exposure
@@ -8,7 +7,7 @@ from .exposure import Exposure
 
 def study_spec(value):
     shape(value, ("metric", "treated", "controls", "before", "after", "tolerance", "minimum_pairs"),
-          ("minimum_coverage",))
+          ("minimum_coverage", "boundary"))
     require(isinstance(value["before"], list) and len(value["before"]) == 2, "period", "before需要起止日期")
     require(isinstance(value["after"], list) and len(value["after"]) == 2, "period", "after需要起止日期")
     before = list(period(*value["before"]))
@@ -20,35 +19,42 @@ def study_spec(value):
     require(type(value["minimum_pairs"]) is int and 1 <= value["minimum_pairs"] <= 10000,
             "pairs", "最低配对数无效")
     basic = query_spec({"metric": value["metric"], "start": before[0], "end": after[1],
-                        "zones": treated + controls, "minimum_coverage": value.get("minimum_coverage", "0.8")})
+                        "zones": treated + controls, "minimum_coverage": value.get("minimum_coverage", "0.8"),
+                        **({"boundary": value["boundary"]} if "boundary" in value else {})})
     return {"metric": basic["metric"], "treated": treated, "controls": controls,
             "before": before, "after": after, "tolerance": str(number(value["tolerance"], "tolerance", 0, 100000)),
-            "minimum_pairs": value["minimum_pairs"], "minimum_coverage": basic["minimum_coverage"]}
+            "minimum_pairs": value["minimum_pairs"], "minimum_coverage": basic["minimum_coverage"],
+            "boundary": basic["boundary"]}
 
 
 class Study:
-    def __init__(self, snapshot):
+    def __init__(self, snapshot, *, boundary="native"):
         self.snapshot = snapshot
-        self.exposure = Exposure(snapshot)
-        self.adaptation = Adaptation(snapshot)
+        self.boundary = boundary
+        self.exposure = Exposure(snapshot, boundary=boundary)
 
     def compare(self, value):
         spec = study_spec(value)
-        self.exposure.readings.catalog.metric(spec["metric"])
+        if spec["boundary"] != self.boundary:
+            return Study(self.snapshot, boundary=spec["boundary"]).compare(value)
+        self.exposure.native_readings.catalog.metric(spec["metric"])
         require(set(spec["treated"] + spec["controls"]).issubset(self.snapshot["zone"]), "zone", "研究行政区不存在")
+        self.exposure._check_zones(spec["treated"] + spec["controls"])
         pools = {}
         excluded = []
         for label in ("before", "after"):
             rows = []
+            spec["label"] = label
             for zone in spec["treated"] + spec["controls"]:
                 for when in days(*spec[label]):
                     row = self.exposure.daily(zone, spec["metric"], when, spec["minimum_coverage"])
-                    reason = self.eligibility(row, zone in spec["treated"], label, spec["metric"])
+                    reason = self.eligibility(row, zone, spec, when)
                     if reason:
                         excluded.append({"phase": label, "zone": zone, "day": when, "reason": reason})
                     else:
                         rows.append(row)
             pools[label] = rows
+        spec.pop("label", None)
         phase_results = {label: self.match(pools[label], spec) for label in pools}
         qualified = all(len(result["pairs"]) >= spec["minimum_pairs"] for result in phase_results.values())
         estimate = None
@@ -56,19 +62,23 @@ class Study:
             estimate = decimal_text(Decimal(phase_results["after"]["mean_difference"])
                                     - Decimal(phase_results["before"]["mean_difference"]))
         return {"study": spec, "status": "qualified" if qualified else "insufficient", "estimate": estimate,
-                "interpretation": "配对暴露差的前后变化，不等同因果证明", "phases": phase_results, "excluded": excluded}
+                "interpretation": "配对暴露差的前后变化，不等同因果证明；前后两期在同一比较边界与人口解释下成队",
+                "boundary": self.boundary, "phases": phase_results, "excluded": excluded}
 
-    def eligibility(self, row, treated, phase, metric):
+    def eligibility(self, row, zone, spec, when):
+        metric = spec["metric"]
         if not row["usable"]:
             return "+".join(row["reason"])
         if row["population"]["population"] == 0:
             return "zero_population"
-        active = self.adaptation.is_treated(row["zone"], metric, row["day"])
+        _, _, adaptation = self.exposure.components_for(zone)
+        active = adaptation.is_treated(zone, metric, when)
+        treated = zone in spec["treated"]
         if not treated and active:
             return "control_contaminated"
-        if treated and phase == "before" and active:
+        if treated and spec["label"] == "before" and active:
             return "treated_before_activation"
-        if treated and phase == "after" and not active:
+        if treated and spec["label"] == "after" and not active:
             return "action_not_active"
         return None
 

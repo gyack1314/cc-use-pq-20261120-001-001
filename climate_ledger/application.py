@@ -1,6 +1,8 @@
 from .adaptation import Adaptation, normalize_action
 from .analysis.exposure import Exposure
 from .analysis.study import Study
+from .boundaries import (BoundaryMaps, normalize_facility_allocation,
+                         normalize_population_share, normalize_station_coverage, view_components)
 from .contracts import KINDS, identifier, integer, require, shape, text
 from .ledger import Ledger
 from .observatory.catalog import Catalog, normalize_metric, normalize_station, normalize_zone
@@ -10,7 +12,10 @@ from .residents import Residents, normalize_population
 
 
 NORMALIZERS = {"zone": normalize_zone, "metric": normalize_metric, "station": normalize_station,
-               "population": normalize_population, "action": normalize_action, "reading": normalize_reading}
+               "population": normalize_population, "action": normalize_action, "reading": normalize_reading,
+               "population_share": normalize_population_share,
+               "station_coverage": normalize_station_coverage,
+               "facility_allocation": normalize_facility_allocation}
 
 
 class Application:
@@ -30,6 +35,7 @@ class Application:
         Readings(snapshot).validate()
         Residents(snapshot).validate()
         Adaptation(snapshot).validate()
+        BoundaryMaps(snapshot).validate()
 
     def ingest(self, bundle):
         shape(bundle, ("id", "source", "records"))
@@ -81,22 +87,67 @@ class Application:
                     "releases": self.publication.list_releases()}
 
     def diagnose(self, spec):
+        from .analysis.exposure import Exposure
         from .contracts import query_spec
         spec = query_spec(spec)
         with self.ledger.transaction():
             snapshot = self.ledger.snapshot()
-            readings = Readings(snapshot)
-            residents = Residents(snapshot)
-            adaptation = Adaptation(snapshot)
-            return {"watermark": self.ledger.watermark(), "zones": [
-                {"zone": zone, "observations": readings.diagnostics(zone, spec["metric"], spec["start"], spec["end"]),
-                 "residents": residents.period_coverage(zone, spec["start"], spec["end"]),
-                 "actions": adaptation.utilization(zone, spec["metric"], spec["start"], spec["end"], readings, spec["minimum_coverage"])}
-                for zone in spec["zones"]]}
+            exposure = Exposure(snapshot, boundary=spec["boundary"])
+            zones = []
+            for zone in spec["zones"]:
+                readings, residents, adaptation = exposure.components_for(zone)
+                zones.append({"zone": zone,
+                              "observations": readings.diagnostics(zone, spec["metric"], spec["start"], spec["end"]),
+                              "residents": residents.period_coverage(zone, spec["start"], spec["end"]),
+                              "actions": adaptation.utilization(zone, spec["metric"], spec["start"], spec["end"],
+                                                                readings, spec["minimum_coverage"])})
+            return {"watermark": self.ledger.watermark(), "boundary": spec["boundary"], "zones": zones}
 
     def history(self, kind, identity):
         with self.ledger.transaction():
             return self.ledger.history(kind, identity)
+
+    def trace(self, zone, *, mode="native", metric=None, day=None):
+        from .contracts import contains, day as parse_day
+        with self.ledger.transaction():
+            snapshot = self.ledger.snapshot()
+            maps = BoundaryMaps(snapshot)
+            require(mode in ("native", "project"), "boundary", "边界模式需要native或project")
+            if day is not None:
+                parse_day(day)
+            if mode == "native":
+                stations = [{"id": s["id"], "revision": s["revision"], "weight": s["weight"],
+                             "metrics": s["metrics"], "start": s["start"], "end": s["end"]}
+                            for s in snapshot["station"].values() if s["zone"] == zone
+                            and (day is None or contains(s, day))]
+                population = [{"id": p["id"], "revision": p["revision"], "group": p["group"],
+                               "count": p["count"], "vulnerability": p["vulnerability"],
+                               "start": p["start"], "end": p["end"]}
+                              for p in snapshot["population"].values() if p["zone"] == zone
+                              and (day is None or contains(p, day))]
+                actions = [{"id": a["id"], "revision": a["revision"], "facility": a["facility"],
+                            "metric": a["metric"], "capacity": a["capacity"], "status": a["status"],
+                            "groups": a["groups"], "start": a["start"], "end": a["end"]}
+                           for a in snapshot["action"].values() if a["zone"] == zone
+                           and (day is None or contains(a, day))]
+                return {"zone": zone, "mode": mode, "day": day, "native_attribution": True,
+                        "stations": stations, "population": population, "actions": actions,
+                        "boundary_mappings": {"population_share": [], "station_coverage": [],
+                                              "facility_allocation": []}}
+            shares = [r for r in snapshot["population_share"].values() if r["target_zone"] == zone
+                      and (day is None or contains(r, day))]
+            coverage = [r for r in snapshot["station_coverage"].values() if r["target_zone"] == zone
+                        and (metric is None or metric in r["metrics"])
+                        and (day is None or contains(r, day))]
+            allocations = [r for r in snapshot["facility_allocation"].values() if r["target_zone"] == zone
+                           and (day is None or contains(r, day))]
+            residents = view_components(snapshot, "project")["residents"]
+            denominator = residents.day(zone, day) if day is not None else None
+            return {"zone": zone, "mode": mode, "day": day, "native_attribution": False,
+                    "boundary_mappings": {"population_share": sorted(shares, key=lambda r: r["id"]),
+                                          "station_coverage": sorted(coverage, key=lambda r: r["id"]),
+                                          "facility_allocation": sorted(allocations, key=lambda r: r["id"])},
+                    "denominator": denominator}
 
     def plan(self, spec, *, seq=None):
         from .analysis.portfolio import Portfolio

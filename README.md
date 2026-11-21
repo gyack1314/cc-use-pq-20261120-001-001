@@ -16,9 +16,10 @@ python -m climate_ledger --database city.sqlite3 equity examples/exposure.json
 python -m climate_ledger --database city.sqlite3 priorities examples/exposure.json
 python -m climate_ledger --database city.sqlite3 diagnose examples/exposure.json
 python -m climate_ledger --database city.sqlite3 audit
+python -m climate_ledger --database city.sqlite3 trace west --mode project --metric heat --day 2026-08-03
 ```
 
-`examples/` 全部是本地合成城市资料，不代表真实居民、观测站或研究结论。`city.json` 中资料包由 `id`、`source` 和 `records` 构成，每条资料含 `kind` 与 `data`。资料类型包括行政区、指标、站点、人口、行动及逐日观测。精确字段以该合成资料及 `formats.py` 的 CSV 列契约为准。
+`examples/` 全部是本地合成城市资料，不代表真实居民、观测站或研究结论。`city.json` 中资料包由 `id`、`source` 和 `records` 构成，每条资料含 `kind` 与 `data`。资料类型包括行政区、指标、站点、人口、行动、逐日观测，以及人口份额、站点覆盖、设施分配三类边界映射。精确字段以该合成资料及 `formats.py` 的 CSV 列契约为准。
 
 新对象从修订1开始；同修订只能重送相同内容，高修订由同一资料来源提交。整个资料包通过业务关联检查后才入账；一个对象不合格会拒绝整包。资料包编号绑定原始内容摘要，重送不新增水位，同编号更换内容会拒绝。观测身份是站点、指标与日期，其他对象使用稳定编号。此版本不支持删除资料、改变来源所有权或并行来源竞选。
 
@@ -36,4 +37,18 @@ python -m climate_ledger --database city.sqlite3 audit
 
 `reconcile` 在相同分析条件下核对两个入账水位，说明哪些资料修订和区日结果变化，不能将该差异当作时间趋势。`export-csv` 导出资料快照，`ingest-csv` 可读单类资料，数组列使用 JSON 数组。`backup` 生成可直接重新打开的一致数据库副本，拒绝覆盖已有文件。`audit` 检查历史资料关联、修订顺序和发布证据链。数据账是本机受信文件；本工具没有网络账号系统，不应用于替代多人访问权限控制。
 
-目录中 `observatory/` 负责指标、站点和观测有效性，`residents.py` 负责人口分母，`adaptation.py` 负责行动资格和保护容量，`analysis/` 组织暴露、研究、组合与差异分析，`publication.py` 负责审核与专题发布，`ledger.py` 维护不可变修订，`application.py` 连接业务事务。测试按这些业务边界组织，包含跨边界更正、失败回滚、发布冲突和备份恢复。
+## 行政边界按日期拆合
+
+站点、人口和行动仍固定登记在原区划下，原始来源身份与已发布文件永不因边界修订而改写。边界资料以独立事实给出原区、目标区、生效起止日期和对象种类，只改变历史资料的解释方式：
+
+- `population_share`（人口份额）按原区、目标区、人群分别声明。同一生效范围内同一原区同一群体的份额必须守恒为1；投影到目标区的人数必须保持整数，不能制造分数居民；同一目标区群体的脆弱度来源必须一致。
+- `station_coverage`（站点覆盖）按站点覆盖的目标区分别给权重。同一站点跨目标区的权重总和不能超过1，且覆盖有效期不能超出站点本身有效期。站点覆盖独立于人口份额，不能用人口比例替代；缺覆盖映射的目标区热分析是不可投影缺口，不凭份额制造气象条件。
+- `facility_allocation`（设施分配）给目标区服务容量。同一设施跨目标区的容量总和不能超过其当日生效行动的原服务人数，分配人群必须是设施行动服务人群的子集；跨区后不能各得到一份完整名额。
+
+三类映射各自独立生效，目标区缺少某类必要映射时，对应分析显式报告缺口（`station_coverage_missing`、`population_share_missing` 等）而不退回原区值假装完整。投影日结果区分三种状态：没有数据（缺测 `observation_gap`）、不能投影（缺边界映射）、真实零暴露（无危险日的已知零值）。
+
+查询通过可选 `boundary.mode` 选择口径：默认 `native` 按登记时的原区划解释，行为与旧版本完全一致；`project` 把查询区解释为目标区，未参与拆合的普通区自动按原区划直通，原区在投影口径下不能直接查询（必须查其目标区或切回 native）。前后期比较研究在同一比较边界与人口解释下形成可比队列；跨界设施的实际保护会改变目标区能否作为未干预对照，不能仅给结果换区名。假设行动组合 `plan` 只在原区划下模拟，投影口径拒绝虚构目标区行动。
+
+选择拆分前的边界观察合并结果时，目标区人口合计与设施容量均与原区守恒；无法倒推的观测保持缺口。`trace` 命令可追溯任一区在指定口径下的原始归属、采用的边界修订、各分组分母（含每条来源人口与份额）和行动去向。既有单区资料无需任何边界映射即可继续使用；边界资料与其他资料走同一入账通道，一个对象不合格会拒绝整包并按历史水位回滚，历史水位回查、旧发布校验与 `audit` 证据链对边界资料同样成立。
+
+目录中 `observatory/` 负责指标、站点和观测有效性，`residents.py` 负责人口分母，`adaptation.py` 负责行动资格和保护容量，`boundaries.py` 负责边界映射校验与投影口径解释，`analysis/` 组织暴露、研究、组合与差异分析，`publication.py` 负责审核与专题发布，`ledger.py` 维护不可变修订，`application.py` 连接业务事务。测试按这些业务边界组织，包含跨边界更正、失败回滚、发布冲突、备份恢复和拆合守恒。

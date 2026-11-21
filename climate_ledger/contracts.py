@@ -127,12 +127,25 @@ def row_key(kind, record):
     return record["id"]
 
 
-KINDS = ("zone", "metric", "station", "population", "action", "reading")
+KINDS = ("zone", "metric", "station", "population", "action", "reading",
+         "population_share", "station_coverage", "facility_allocation")
 
 
 def query_spec(value):
-    shape(value, ("metric", "start", "end", "zones"), ("minimum_coverage",))
+    shape(value, ("metric", "start", "end", "zones"), ("minimum_coverage", "boundary"))
     start, end = period(value["start"], value["end"])
+    mode = "native"
+    if "boundary" in value:
+        if isinstance(value["boundary"], str):
+            require(value["boundary"] in ("native", "project"), "boundary", "边界模式需要native或project")
+            mode = value["boundary"]
+        else:
+            require(isinstance(value["boundary"], dict), "boundary", "边界口径需要对象")
+            shape(value["boundary"], ("mode",))
+            require(value["boundary"]["mode"] in ("native", "project"),
+                    "boundary", "边界模式需要native或project")
+            mode = value["boundary"]["mode"]
     return {"metric": identifier(value["metric"], "metric"), "start": start, "end": end,
             "zones": distinct_strings(value["zones"], "zones"),
-            "minimum_coverage": str(number(value.get("minimum_coverage", "0.8"), "minimum_coverage", 0, 1))}
+            "minimum_coverage": str(number(value.get("minimum_coverage", "0.8"), "minimum_coverage", 0, 1)),
+            "boundary": mode}

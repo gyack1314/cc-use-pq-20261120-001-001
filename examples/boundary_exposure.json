@@ -1,0 +1,8 @@
+{
+  "metric": "heat",
+  "zones": ["east", "west", "hill"],
+  "start": "2026-08-01",
+  "end": "2026-08-04",
+  "minimum_coverage": "0.8",
+  "boundary": {"mode": "project"}
+}

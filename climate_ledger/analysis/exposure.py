@@ -1,53 +1,83 @@
 from decimal import Decimal
 
-from ..adaptation import Adaptation
+from ..boundaries import BoundaryMaps, view_components
 from ..contracts import days, decimal_text, query_spec, ratio, require
-from ..observatory.readings import Readings
-from ..residents import Residents
 
 
 class Exposure:
-    def __init__(self, snapshot):
+    def __init__(self, snapshot, *, boundary="native"):
         self.snapshot = snapshot
-        self.readings = Readings(snapshot)
-        self.residents = Residents(snapshot)
-        self.adaptation = Adaptation(snapshot)
+        self.boundary = boundary
+        self.maps = BoundaryMaps(snapshot) if boundary == "project" else None
+        native = view_components(snapshot, "native")
+        projected = view_components(snapshot, "project") if boundary == "project" else None
+        self.native_readings, self.native_residents, self.native_adaptation = (
+            native["readings"], native["residents"], native["adaptation"])
+        self.projected = projected
+        self.readings, self.residents, self.adaptation = (
+            native["readings"], native["residents"], native["adaptation"])
+
+    def is_target(self, zone):
+        return self.maps is not None and zone in self.maps.targets()
+
+    def components_for(self, zone):
+        if self.is_target(zone):
+            return (self.projected["readings"], self.projected["residents"],
+                    self.projected["adaptation"])
+        return self.native_readings, self.native_residents, self.native_adaptation
+
+    def _check_zones(self, zones):
+        if self.maps is None:
+            for zone in zones:
+                require(zone not in BoundaryMaps(self.snapshot).targets(), "boundary",
+                        "目标区只存在于投影口径，请显式指定boundary.mode=project", zone=zone)
+            return
+        sources = self.maps.source_zones()
+        for zone in zones:
+            require(zone not in sources, "boundary",
+                    "投影口径不能直接查询原区，请查询其目标区或改用native口径", zone=zone)
 
     def daily(self, zone, metric, when, minimum_coverage):
-        weather = self.readings.zone_day(zone, metric, when, minimum_coverage)
-        population = self.residents.day(zone, when)
+        readings, residents, adaptation = self.components_for(zone)
+        weather = readings.zone_day(zone, metric, when, minimum_coverage)
+        population = residents.day(zone, when)
         usable = weather["usable"] and population["complete"]
-        result = {"zone": zone, "day": when, "usable": usable, "weather": weather,
-                  "population": population, "hazardous": weather["hazardous"],
+        result = {"zone": zone, "day": when, "usable": usable, "boundary": self.boundary,
+                  "weather": weather, "population": population, "hazardous": weather["hazardous"],
                   "protected": None, "exposed": None, "weighted_burden": None,
                   "groups": [], "actions": [], "reason": []}
         if not weather["usable"]:
-            result["reason"].append("observation_gap")
+            result["reason"].append(weather.get("gap") or "observation_gap")
         if not population["complete"]:
-            result["reason"].append("population_gap")
+            result["reason"].append(population.get("gap") or "population_gap")
         if not usable:
             return result
-        allocation = self.adaptation.allocate(zone, metric, when, hazardous=weather["hazardous"])
-        burden = self.residents.burden(zone, when, weather["severity"], allocation["protected"])
+        allocation = adaptation.allocate(zone, metric, when, hazardous=weather["hazardous"])
+        burden = residents.burden(zone, when, weather["severity"], allocation["protected"])
         if not weather["hazardous"]:
             burden["exposed"] = 0
             for group in burden["groups"]:
                 group["exposed"] = 0
         result.update(protected=sum(allocation["protected"].values()), exposed=burden["exposed"],
-                      weighted_burden=burden["weighted_burden"], groups=burden["groups"], actions=allocation["actions"])
+                      weighted_burden=burden["weighted_burden"], groups=burden["groups"],
+                      actions=allocation["actions"])
         return result
 
     def analyze(self, spec):
         spec = query_spec(spec)
-        self.readings.catalog.metric(spec["metric"])
+        if spec["boundary"] != self.boundary:
+            return Exposure(self.snapshot, boundary=spec["boundary"]).analyze(spec)
+        self.native_readings.catalog.metric(spec["metric"])
         require(set(spec["zones"]).issubset(self.snapshot["zone"]), "zone", "查询含未知行政区")
+        self._check_zones(spec["zones"])
         daily = [self.daily(zone, spec["metric"], when, spec["minimum_coverage"])
                  for zone in spec["zones"] for when in days(spec["start"], spec["end"])]
         strata = [self.summarize(zone, [row for row in daily if row["zone"] == zone]) for zone in spec["zones"]]
         qualified = all(row["complete"] for row in strata)
         all_known = self.summarize("all", daily)
         return {"query": spec, "status": "qualified" if qualified else "incomplete", "strata": strata,
-                "total": all_known, "daily": daily, "episodes": self.episodes(daily)}
+                "total": all_known, "daily": daily, "episodes": self.episodes(daily),
+                "boundary": self.boundary_summary()}
 
     @staticmethod
     def summarize(zone, daily):
@@ -106,6 +136,18 @@ class Exposure:
             if current:
                 result.append(current)
         return result
+
+    def boundary_summary(self):
+        if self.boundary == "native":
+            return {"mode": "native", "interpretation": "按资料登记时的原区划解释，未应用边界修订"}
+        revisions = sorted({row["revision"] for table in ("population_share", "station_coverage",
+                                                           "facility_allocation")
+                            for row in self.maps.snapshot[table].values()})
+        identities = {"population_share": len(self.maps.shares), "station_coverage": len(self.maps.coverage),
+                      "facility_allocation": len(self.maps.allocations),
+                      "target_zones": sorted(self.maps.targets())}
+        return {"mode": "project", **identities, "revisions": revisions,
+                "interpretation": "按选定边界重新解释历史资料；映射缺口是不可投影，不是零暴露，且不改变原始来源身份"}
 
     def priorities(self, spec):
         analysis = self.analyze(spec)

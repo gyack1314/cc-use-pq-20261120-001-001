@@ -33,6 +33,11 @@ def parser():
     history = commands.add_parser("history", help="查看对象修订来源")
     history.add_argument("kind")
     history.add_argument("identity")
+    trace = commands.add_parser("trace", help="追溯区的原始归属、边界修订、分组分母与行动去向")
+    trace.add_argument("zone")
+    trace.add_argument("--mode", choices=("native", "project"), default="native")
+    trace.add_argument("--metric")
+    trace.add_argument("--day")
     draft = commands.add_parser("draft", help="生成带来源证据的分析草稿")
     draft.add_argument("input")
     draft.add_argument("--id", required=True)
@@ -82,6 +87,8 @@ def dispatch(app, args):
         return app.diagnose(load(args.input))
     if args.command == "history":
         return app.history(args.kind, args.identity)
+    if args.command == "trace":
+        return app.trace(args.zone, mode=args.mode, metric=args.metric, day=args.day)
     if args.command == "draft":
         return app.draft(args.id, args.scope, load(args.input), args.author, kind=args.kind)
     if args.command == "review":

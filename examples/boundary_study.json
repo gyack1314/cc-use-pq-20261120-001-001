@@ -1,0 +1,10 @@
+{
+  "metric": "heat",
+  "treated": ["west"],
+  "controls": ["hill"],
+  "before": ["2026-08-01", "2026-08-02"],
+  "after": ["2026-08-03", "2026-08-04"],
+  "tolerance": "5",
+  "minimum_pairs": 1,
+  "boundary": {"mode": "project"}
+}

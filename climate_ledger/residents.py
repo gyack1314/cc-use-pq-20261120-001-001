@@ -13,6 +13,24 @@ def normalize_population(record):
             "vulnerability": str(number(record["vulnerability"], "vulnerability", 1, 10))}
 
 
+def compute_burden(groups, severity, protected):
+    """按群体脆弱度与阈值距离计算加权负担，原区与投影口径共用。"""
+    from .contracts import decimal_text
+    total = Decimal(0)
+    weighted = Decimal(0)
+    detail = []
+    for row in groups:
+        served = protected.get(row["group"], 0)
+        require(0 <= served <= row["count"], "protection", "保护人数不能超过有效人口")
+        exposed = row["count"] - served
+        burden = Decimal(exposed) * Decimal(severity) * Decimal(row["vulnerability"])
+        total += exposed
+        weighted += burden
+        detail.append({**row, "protected": served, "exposed": exposed,
+                       "weighted_burden": decimal_text(burden)})
+    return {"exposed": int(total), "weighted_burden": decimal_text(weighted), "groups": detail}
+
+
 class Residents:
     def __init__(self, snapshot):
         self.rows = snapshot["population"]
@@ -50,18 +68,7 @@ class Residents:
     def burden(self, zone, when, severity, protected):
         population = self.day(zone, when)
         require(population["complete"], "population_gap", "人口分母不完整，不能形成暴露估计")
-        total = Decimal(0)
-        weighted = Decimal(0)
-        detail = []
-        for row in population["groups"]:
-            served = protected.get(row["group"], 0)
-            require(0 <= served <= row["count"], "protection", "保护人数不能超过有效人口")
-            exposed = row["count"] - served
-            burden = Decimal(exposed) * Decimal(severity) * Decimal(row["vulnerability"])
-            total += exposed
-            weighted += burden
-            detail.append({**row, "protected": served, "exposed": exposed, "weighted_burden": decimal_text(burden)})
-        return {"exposed": int(total), "weighted_burden": decimal_text(weighted), "groups": detail}
+        return compute_burden(population["groups"], severity, protected)
 
     def period_coverage(self, zone, start, end):
         from .contracts import days
